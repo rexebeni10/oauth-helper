@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Outlook Authorization Helper</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    background: #f5f7fb;
+    color: #1f2933;
+    line-height: 1.5;
+  }
+  .container {
+    max-width: 640px;
+    margin: 4vh auto;
+    padding: 32px 24px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+  }
+  h1 { margin: 0 0 8px; font-size: 22px; font-weight: 600; }
+  h2 { font-size: 18px; font-weight: 600; margin: 24px 0 12px; }
+  p { margin: 0 0 16px; color: #52606d; }
+  .muted { color: #7b8794; font-size: 14px; }
+  label {
+    display: block;
+    font-weight: 600;
+    font-size: 14px;
+    margin: 16px 0 6px;
+  }
+  input[type=email], input[type=text] {
+    width: 100%;
+    padding: 12px 14px;
+    font-size: 16px;
+    border: 1px solid #cbd2d9;
+    border-radius: 8px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input:focus { border-color: #2562d4; }
+  button.primary {
+    display: block;
+    width: 100%;
+    padding: 14px 18px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    background: #2562d4;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-top: 16px;
+    transition: background 0.15s;
+  }
+  button.primary:hover { background: #1d4ed8; }
+  button.primary:disabled { background: #9aa5b1; cursor: wait; }
+  button.secondary {
+    padding: 8px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #2562d4;
+    background: #eaf1fc;
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-right: 6px;
+  }
+  button.secondary:hover { background: #d6e4fa; }
+  textarea {
+    width: 100%;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    padding: 12px;
+    border: 1px solid #cbd2d9;
+    border-radius: 8px;
+    background: #fafbfc;
+    resize: vertical;
+    min-height: 180px;
+  }
+  .panel {
+    padding: 12px 16px;
+    background: #f5f7fb;
+    border-left: 4px solid #2562d4;
+    border-radius: 4px;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+  .panel.warn { border-left-color: #d97706; background: #fef6e7; }
+  .panel.error { border-left-color: #d62828; background: #fcecec; color: #82211b; }
+  .panel.ok { border-left-color: #1c8c5b; background: #ecfaf1; color: #14532d; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; }
+  .hidden { display: none; }
+  .copied { color: #1c8c5b; font-size: 13px; margin-left: 8px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Outlook Authorization Helper</h1>
+  <p class="muted">
+    Grants the <strong>coinbase-mail-reader</strong> app permission to read
+    the verification emails sent to your Outlook account. No password is
+    stored or transmitted to the operator — only a Microsoft-issued
+    refresh token that you can revoke any time at
+    <a href="https://account.microsoft.com/privacy/app-access"
+       target="_blank" rel="noopener">account.microsoft.com</a>.
+  </p>
+
+  <!-- ── Step 1: ask which account to authorize ───────────────────── -->
+  <section id="step-input">
+    <label for="email-input">Outlook account email</label>
+    <input id="email-input" type="email" autocomplete="email"
+           placeholder="example@outlook.com" autofocus>
+    <p class="muted" style="font-size:13px; margin-top:6px;">
+      You must sign in to Microsoft as <em>this exact email</em> on the
+      next page. If you accidentally pick a different account, the helper
+      will reject the result and you'll have to start over.
+    </p>
+    <button class="primary" id="authorize-btn">
+      Authorize this Outlook account
+    </button>
+  </section>
+
+  <!-- ── Step 2: in-flight loading state ───────────────────────────── -->
+  <section id="step-loading" class="hidden">
+    <h2>Exchanging authorization with Microsoft…</h2>
+    <p class="muted">
+      This usually takes a couple of seconds. Don't close this tab.
+    </p>
+  </section>
+
+  <!-- ── Step 3: success — show the result blob ────────────────────── -->
+  <section id="step-result" class="hidden">
+    <div class="panel ok">
+      <strong>Authorization successful.</strong>
+      <span id="result-email-line"></span>
+    </div>
+    <h2>Send this block to the operator</h2>
+    <p>
+      Copy the entire block below and send it to the operator through your
+      usual channel (chat, email, etc.). The operator imports it once and
+      no further action is required from you.
+    </p>
+    <div class="panel warn">
+      <strong>Security note.</strong> This block contains a long-lived
+      refresh token equivalent to read-only mailbox access. Send it only
+      over a channel you trust, and try not to keep copies after the
+      operator confirms it's been imported. You can always revoke access
+      via Microsoft's privacy settings.
+    </div>
+    <textarea id="result-blob" readonly></textarea>
+    <div style="margin-top:12px;">
+      <button class="secondary" id="copy-btn">Copy</button>
+      <button class="secondary" id="restart-btn">Authorize another account</button>
+      <span id="copied-flag" class="copied hidden">copied!</span>
+    </div>
+  </section>
+
+  <!-- ── Step 4: error state ───────────────────────────────────────── -->
+  <section id="step-error" class="hidden">
+    <div class="panel error">
+      <strong>Something went wrong.</strong>
+      <p id="error-msg" style="margin:8px 0 0;"></p>
+    </div>
+    <button class="primary" id="error-restart-btn"
+            style="margin-top:16px;">
+      Start over
+    </button>
+  </section>
+
+</div>
+
+<script>
+"use strict";
+
+// ── Azure app registration (public client) ──────────────────────────
+//
+// Same client_id as email_oauth_setup.py — both reference the SAME
+// app registration in Microsoft Entra. This is public information by
+// design (no secret); putting it in committed HTML is safe.
+const CLIENT_ID = "9d540e09-3b89-4c2f-be10-2fed49864b53";
+const AUTHORITY = "https://login.microsoftonline.com/common";
+const SCOPES = "Mail.Read offline_access";
+
+// The redirect_uri MUST match exactly what's registered in Azure under
+// App registrations -> Authentication -> Redirect URIs. We auto-derive
+// from window.location so deploying to any GitHub Pages URL works
+// without changing this file — just register the same URL in Azure.
+const REDIRECT_URI = window.location.origin + window.location.pathname;
+
+// Schema version of the blob we generate. The Python --redeem command
+// checks this to detect future format changes. Bump if you change the
+// blob structure in a backwards-incompatible way.
+const BLOB_VERSION = 1;
+
+
+// ─────────────────────────────────────────────────────────────────────
+// State display helpers
+// ─────────────────────────────────────────────────────────────────────
+
+function showOnly(sectionId) {
+  for (const id of ["step-input", "step-loading",
+                    "step-result", "step-error"]) {
+    document.getElementById(id).classList.toggle(
+      "hidden", id !== sectionId);
+  }
+}
+
+function showError(msg) {
+  document.getElementById("error-msg").textContent = msg;
+  showOnly("step-error");
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// OAuth helpers
+// ─────────────────────────────────────────────────────────────────────
+
+function buildAuthUrl(email) {
+  // State carries the expected email so the callback handler can
+  // verify the user signed in with the right account. We also stash
+  // a nonce in sessionStorage to make this CSRF-resistant (the
+  // callback rejects if state's nonce doesn't match storage).
+  const nonce = (crypto.randomUUID
+                 ? crypto.randomUUID()
+                 : Math.random().toString(36).slice(2));
+  sessionStorage.setItem("oauth_nonce", nonce);
+  sessionStorage.setItem("oauth_email", email);
+  const state = encodeURIComponent(JSON.stringify({email, nonce}));
+  return `${AUTHORITY}/oauth2/v2.0/authorize`
+    + `?client_id=${CLIENT_ID}`
+    + `&response_type=code`
+    + `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`
+    + `&scope=${encodeURIComponent(SCOPES)}`
+    + `&response_mode=query`
+    + `&prompt=select_account`
+    + `&login_hint=${encodeURIComponent(email)}`
+    + `&state=${state}`;
+}
+
+async function exchangeCodeForTokens(code) {
+  const body = new URLSearchParams({
+    client_id: CLIENT_ID,
+    scope: SCOPES,
+    code: code,
+    redirect_uri: REDIRECT_URI,
+    grant_type: "authorization_code",
+  });
+  const resp = await fetch(`${AUTHORITY}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: {"Content-Type": "application/x-www-form-urlencoded"},
+    body: body.toString(),
+  });
+  return await resp.json();
+}
+
+function decodeIdToken(idToken) {
+  if (!idToken || typeof idToken !== "string") return {};
+  const parts = idToken.split(".");
+  if (parts.length !== 3) return {};
+  try {
+    // JWT payload is base64url-encoded JSON.
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = b64 + "=".repeat((4 - b64.length % 4) % 4);
+    return JSON.parse(atob(padded));
+  } catch (e) {
+    return {};
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Page flow handlers
+// ─────────────────────────────────────────────────────────────────────
+
+function onAuthorizeClick() {
+  const input = document.getElementById("email-input");
+  const email = (input.value || "").trim().toLowerCase();
+  if (!email || !email.includes("@")) {
+    input.focus();
+    input.style.borderColor = "#d62828";
+    return;
+  }
+  // Redirect to Microsoft — when they come back, the URL will have
+  // ?code=... and our DOMContentLoaded handler will pick it up.
+  window.location.href = buildAuthUrl(email);
+}
+
+async function handleCallback(urlParams) {
+  const error = urlParams.get("error");
+  if (error) {
+    const desc = urlParams.get("error_description") || "";
+    showError(
+      `Microsoft returned an OAuth error: ${error}\n\n${desc}\n\n` +
+      `Try again, or message the operator if this keeps happening.`
+    );
+    return;
+  }
+  const code = urlParams.get("code");
+  if (!code) {
+    showOnly("step-input");
+    return;
+  }
+
+  // CSRF / state verification
+  const rawState = urlParams.get("state") || "";
+  let stateData = {};
+  try {
+    stateData = JSON.parse(decodeURIComponent(rawState));
+  } catch (e) { /* ignore */ }
+  const expectedNonce = sessionStorage.getItem("oauth_nonce") || "";
+  const expectedEmail = sessionStorage.getItem("oauth_email") || "";
+  if (stateData.nonce && expectedNonce
+      && stateData.nonce !== expectedNonce) {
+    showError(
+      "State nonce mismatch — this could be a stale or tampered " +
+      "callback. Start over and complete the flow without leaving " +
+      "this tab.");
+    return;
+  }
+  // Clean URL immediately so refresh doesn't re-trigger.
+  history.replaceState({}, document.title, window.location.pathname);
+
+  showOnly("step-loading");
+
+  let tokenResponse;
+  try {
+    tokenResponse = await exchangeCodeForTokens(code);
+  } catch (e) {
+    showError(`Network error while exchanging code: ${e.message}`);
+    return;
+  }
+  if (tokenResponse.error) {
+    showError(
+      `Microsoft rejected the code exchange: ` +
+      `${tokenResponse.error} — ${tokenResponse.error_description || ""}`
+    );
+    return;
+  }
+  if (!tokenResponse.refresh_token) {
+    showError(
+      "Microsoft returned tokens but no refresh_token. Most likely " +
+      "cause: the 'offline_access' scope wasn't granted. Try again, " +
+      "and on the consent screen make sure 'Maintain access to data " +
+      "you have given it access to' stays checked."
+    );
+    return;
+  }
+
+  // Verify the user signed in with the right account.
+  const claims = decodeIdToken(tokenResponse.id_token);
+  const signedIn = (claims.preferred_username
+                    || claims.email
+                    || claims.upn
+                    || "").toLowerCase();
+  if (expectedEmail && signedIn
+      && signedIn !== expectedEmail) {
+    showError(
+      `You signed in as ${signedIn}, but this authorization was started ` +
+      `for ${expectedEmail}.\n\nThe operator's script will reject this ` +
+      `mismatch on import. Click "Start over" and use the correct ` +
+      `account this time.`
+    );
+    return;
+  }
+
+  // Success — build the blob.
+  const blob = {
+    version: BLOB_VERSION,
+    email: signedIn || expectedEmail,
+    refresh_token: tokenResponse.refresh_token,
+    scope: tokenResponse.scope || SCOPES,
+    signed_in_at: new Date().toISOString(),
+    client_id: CLIENT_ID,
+  };
+  document.getElementById("result-blob").value =
+    JSON.stringify(blob, null, 2);
+  document.getElementById("result-email-line").textContent =
+    " Signed in as " + (signedIn || expectedEmail || "<unknown>");
+
+  // Clear sensitive sessionStorage (the nonce and email are no longer
+  // needed; we don't want them lingering if the device is shared).
+  sessionStorage.removeItem("oauth_nonce");
+  sessionStorage.removeItem("oauth_email");
+
+  showOnly("step-result");
+}
+
+function onCopyClick() {
+  const ta = document.getElementById("result-blob");
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch (e) { /* ignore */ }
+  if (!ok && navigator.clipboard) {
+    // Fallback for browsers that disable execCommand.
+    navigator.clipboard.writeText(ta.value).then(
+      () => flashCopied(), () => alert("Couldn't copy — select and copy manually."));
+    return;
+  }
+  flashCopied();
+}
+
+function flashCopied() {
+  const flag = document.getElementById("copied-flag");
+  flag.classList.remove("hidden");
+  setTimeout(() => flag.classList.add("hidden"), 1500);
+}
+
+function onRestartClick() {
+  // Send back to bare URL — DOMContentLoaded will show step-input.
+  window.location.href = window.location.pathname;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
+// Wire up & boot
+// ─────────────────────────────────────────────────────────────────────
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("authorize-btn")
+    .addEventListener("click", onAuthorizeClick);
+  document.getElementById("copy-btn")
+    .addEventListener("click", onCopyClick);
+  document.getElementById("restart-btn")
+    .addEventListener("click", onRestartClick);
+  document.getElementById("error-restart-btn")
+    .addEventListener("click", onRestartClick);
+  document.getElementById("email-input")
+    .addEventListener("keydown", (e) => {
+      if (e.key === "Enter") onAuthorizeClick();
+    });
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.has("code") || params.has("error")) {
+    handleCallback(params);
+  } else {
+    showOnly("step-input");
+  }
+});
+</script>
+</body>
+</html>
