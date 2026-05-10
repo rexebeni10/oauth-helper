@@ -218,10 +218,47 @@ function showError(msg) {
 
 
 // ─────────────────────────────────────────────────────────────────────
+// PKCE helpers (Proof Key for Code Exchange — RFC 7636)
+// ─────────────────────────────────────────────────────────────────────
+//
+// Browser apps can't safely store a client_secret (anyone viewing the
+// page source could steal it). Microsoft's Single-page-application
+// platform refuses to accept a secret and requires PKCE instead:
+// during /authorize, the page sends a `code_challenge` = SHA-256
+// hash of a random `code_verifier`. During /token, the page proves
+// it has the verifier by including it in the request. Microsoft
+// re-hashes the verifier and rejects the exchange if the hash doesn't
+// match the challenge it saw at /authorize. Result: even if someone
+// intercepts the authorization code, they can't trade it for tokens
+// without the verifier (which only this page knows).
+
+function base64urlEncode(bytes) {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function generatePkceVerifier() {
+  // RFC 7636: 43-128 chars, [A-Z a-z 0-9 -._~]. Using 32 random bytes
+  // → 43-char base64url string after stripping padding. Well within
+  // both Microsoft's and RFC's accepted range.
+  const buf = new Uint8Array(32);
+  crypto.getRandomValues(buf);
+  return base64urlEncode(buf);
+}
+
+async function pkceChallengeFor(verifier) {
+  const data = new TextEncoder().encode(verifier);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return base64urlEncode(new Uint8Array(digest));
+}
+
+
+// ─────────────────────────────────────────────────────────────────────
 // OAuth helpers
 // ─────────────────────────────────────────────────────────────────────
 
-function buildAuthUrl(email) {
+async function buildAuthUrl(email) {
   // State carries the expected email so the callback handler can
   // verify the user signed in with the right account. We also stash
   // a nonce in sessionStorage to make this CSRF-resistant (the
@@ -231,6 +268,13 @@ function buildAuthUrl(email) {
                  : Math.random().toString(36).slice(2));
   sessionStorage.setItem("oauth_nonce", nonce);
   sessionStorage.setItem("oauth_email", email);
+
+  // PKCE: generate verifier, derive challenge, stash verifier for the
+  // callback's token-exchange step.
+  const verifier = generatePkceVerifier();
+  const challenge = await pkceChallengeFor(verifier);
+  sessionStorage.setItem("pkce_verifier", verifier);
+
   const state = encodeURIComponent(JSON.stringify({email, nonce}));
   return `${AUTHORITY}/oauth2/v2.0/authorize`
     + `?client_id=${CLIENT_ID}`
@@ -240,16 +284,32 @@ function buildAuthUrl(email) {
     + `&response_mode=query`
     + `&prompt=select_account`
     + `&login_hint=${encodeURIComponent(email)}`
+    + `&code_challenge=${encodeURIComponent(challenge)}`
+    + `&code_challenge_method=S256`
     + `&state=${state}`;
 }
 
 async function exchangeCodeForTokens(code) {
+  // Recover the PKCE verifier from sessionStorage — Microsoft uses
+  // this (not a client_secret) to prove the page that's redeeming the
+  // code is the same one that started the flow.
+  const verifier = sessionStorage.getItem("pkce_verifier") || "";
+  if (!verifier) {
+    return {
+      error: "missing_pkce_verifier",
+      error_description:
+        "The PKCE verifier disappeared from this tab's storage. " +
+        "This usually means the tab was reloaded between starting " +
+        "the flow and returning. Start over."
+    };
+  }
   const body = new URLSearchParams({
     client_id: CLIENT_ID,
     scope: SCOPES,
     code: code,
     redirect_uri: REDIRECT_URI,
     grant_type: "authorization_code",
+    code_verifier: verifier,
   });
   const resp = await fetch(`${AUTHORITY}/oauth2/v2.0/token`, {
     method: "POST",
@@ -278,7 +338,7 @@ function decodeIdToken(idToken) {
 // Page flow handlers
 // ─────────────────────────────────────────────────────────────────────
 
-function onAuthorizeClick() {
+async function onAuthorizeClick() {
   const input = document.getElementById("email-input");
   const email = (input.value || "").trim().toLowerCase();
   if (!email || !email.includes("@")) {
@@ -286,9 +346,19 @@ function onAuthorizeClick() {
     input.style.borderColor = "#d62828";
     return;
   }
-  // Redirect to Microsoft — when they come back, the URL will have
-  // ?code=... and our DOMContentLoaded handler will pick it up.
-  window.location.href = buildAuthUrl(email);
+  // Disable the button so a double-click doesn't fire two flows
+  // (only one PKCE verifier survives in sessionStorage).
+  const btn = document.getElementById("authorize-btn");
+  btn.disabled = true;
+  btn.textContent = "Redirecting to Microsoft…";
+  try {
+    const url = await buildAuthUrl(email);
+    window.location.href = url;
+  } catch (e) {
+    showError(`Couldn't build the auth URL: ${e.message}`);
+    btn.disabled = false;
+    btn.textContent = "Authorize this Outlook account";
+  }
 }
 
 async function handleCallback(urlParams) {
@@ -383,10 +453,12 @@ async function handleCallback(urlParams) {
   document.getElementById("result-email-line").textContent =
     " Signed in as " + (signedIn || expectedEmail || "<unknown>");
 
-  // Clear sensitive sessionStorage (the nonce and email are no longer
-  // needed; we don't want them lingering if the device is shared).
+  // Clear sensitive sessionStorage (the nonce, email and PKCE
+  // verifier are no longer needed; we don't want them lingering if
+  // the device is shared).
   sessionStorage.removeItem("oauth_nonce");
   sessionStorage.removeItem("oauth_email");
+  sessionStorage.removeItem("pkce_verifier");
 
   showOnly("step-result");
 }
