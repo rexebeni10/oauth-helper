@@ -448,8 +448,22 @@ async function handleCallback(urlParams) {
     signed_in_at: new Date().toISOString(),
     client_id: CLIENT_ID,
   };
+  // Two output modes for the user to choose from:
+  //   - "blob" textarea: single-line JSON (was pretty-printed with
+  //     indent=2; that produced 8 lines per cell, ballooning row
+  //     heights in Google Sheets/Excel). Single-line JSON fits one
+  //     cell row cleanly and still works with --redeem-batch.
+  //   - "token-only" output: bare refresh_token string (recommended
+  //     for the Token column of the CSV — the operator's --from-csv
+  //     command reconstructs the rest of the blob from the row's
+  //     email column + the hardcoded client_id).
   document.getElementById("result-blob").value =
-    JSON.stringify(blob, null, 2);
+    JSON.stringify(blob);
+  // Also expose the bare refresh_token if the page has a slot for it.
+  const tokenOnlyEl = document.getElementById("result-token-only");
+  if (tokenOnlyEl) {
+    tokenOnlyEl.value = blob.refresh_token;
+  }
   document.getElementById("result-email-line").textContent =
     " Signed in as " + (signedIn || expectedEmail || "<unknown>");
 
