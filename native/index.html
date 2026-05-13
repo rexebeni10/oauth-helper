@@ -193,7 +193,15 @@
 // from window.location so the file works at any deployment path that
 // matches what was registered in Azure.
 const CLIENT_ID = "9d540e09-3b89-4c2f-be10-2fed49864b53";
-const AUTHORITY = "https://login.microsoftonline.com/consumers";
+// /common (not /consumers) matches the old SPA helper page's behavior.
+// On the user-facing side, /common honors `login_hint` to show the
+// older single-account "Pick an account" card pre-filtered to the
+// email the operator typed; /consumers ignores login_hint and shows
+// the newer dark multi-account chooser that lists every Microsoft
+// account the user has ever signed into in this browser. Both tenants
+// route personal Outlook accounts to the same backend, so the resulting
+// refresh tokens are identical.
+const AUTHORITY = "https://login.microsoftonline.com/common";
 const SCOPES    = "Mail.Read openid profile offline_access";
 const REDIRECT_URI = window.location.origin + window.location.pathname;
 
