@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "email": "you@outlook.com",
+  "refresh_token": "PASTE_FROM_HELPER_PAGE",
+  "scope": "Mail.Read openid profile offline_access",
+  "signed_in_at": "2026-01-01T00:00:00.000Z",
+  "client_id": "9d540e09-3b89-4c2f-be10-2fed49864b53",
+  "origin": ""
+}

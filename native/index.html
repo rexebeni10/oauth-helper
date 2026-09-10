@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Outlook Authorization Helper (Native)</title>
+<title>Outlook Mail Reader — OAuth Helper</title>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -101,12 +101,13 @@
 <body>
 <div class="container">
 
-  <h1>Outlook Authorization Helper</h1>
+  <h1>Outlook Mail Reader</h1>
   <p class="muted">
-    Grants the <strong>coinbase-mail-reader</strong> app permission to read
-    the verification emails sent to your Outlook account. No password is
-    stored or transmitted to the operator &mdash; only a Microsoft-issued
-    refresh token that you can revoke any time at
+    Sign in with <strong>your</strong> Microsoft account so this page can
+    read verification emails in your Outlook inbox (Microsoft Graph
+    <code>Mail.Read</code>). Your password never touches this page &mdash;
+    Microsoft issues a refresh token that stays in this browser until you
+    copy or download it. Revoke access any time at
     <a href="https://account.microsoft.com/privacy/app-access"
        target="_blank" rel="noopener">account.microsoft.com</a>.
   </p>
@@ -140,23 +141,22 @@
       <strong>Authorization successful.</strong>
       <span id="result-email-line"></span>
     </div>
-    <h2>Send this block to the operator</h2>
+    <h2>Save this token on your computer</h2>
     <p>
-      Copy the entire block below and send it to the operator through your
-      usual channel (chat, email, etc.). The operator imports it once and
-      no further action is required from you.
+      Copy or download the JSON below and keep it private
+      (for example <code>token.json</code> next to the Python CLI).
+      Do not paste it into chat, email, or GitHub.
     </p>
     <div class="panel warn">
-      <strong>Security note.</strong> This block contains a long-lived
-      refresh token equivalent to read-only mailbox access. Send it only
-      over a channel you trust, and try not to keep copies after the
-      operator confirms it's been imported. You can always revoke access
-      via Microsoft's privacy settings.
+      <strong>Security note.</strong> This JSON is a long-lived refresh
+      token. Anyone who has it can read this mailbox until you revoke
+      the app at Microsoft. Store it locally only.
     </div>
     <textarea id="result-blob" readonly></textarea>
     <div style="margin-top:12px;">
       <button class="secondary" id="copy-btn">Copy</button>
-      <button class="secondary" id="restart-btn">Authorize another account</button>
+      <button class="secondary" id="download-btn">Download token.json</button>
+      <button class="secondary" id="restart-btn">Start over</button>
       <span id="copied-flag" class="copied hidden">copied!</span>
     </div>
   </section>
@@ -196,7 +196,7 @@ const CLIENT_ID = "9d540e09-3b89-4c2f-be10-2fed49864b53";
 // /common (not /consumers) matches the old SPA helper page's behavior.
 // On the user-facing side, /common honors `login_hint` to show the
 // older single-account "Pick an account" card pre-filtered to the
-// email the operator typed; /consumers ignores login_hint and shows
+// email you typed; /consumers ignores login_hint and shows
 // the newer dark multi-account chooser that lists every Microsoft
 // account the user has ever signed into in this browser. Both tenants
 // route personal Outlook accounts to the same backend, so the resulting
@@ -324,9 +324,8 @@ async function exchangeCodeForTokens(code) {
       error: "worker_not_configured",
       error_description:
         "The Cloudflare Worker URL is not set in this page's source. " +
-        "The operator needs to deploy worker.js to Cloudflare and " +
-        "paste the resulting *.workers.dev URL into the WORKER_URL " +
-        "constant in this page's <script> block."
+        "Deploy worker.js to Cloudflare and paste the *.workers.dev " +
+        "URL into the WORKER_URL constant in this page's <script> block."
     };
   }
 
@@ -422,7 +421,7 @@ async function handleCallback(urlParams) {
     const desc = urlParams.get("error_description") || "";
     showError(
       `Microsoft returned an OAuth error: ${error}\n\n${desc}\n\n` +
-      `Try again, or message the operator if this keeps happening.`
+      `Try again from the start if this keeps happening.`
     );
     return;
   }
@@ -486,22 +485,15 @@ async function handleCallback(urlParams) {
   if (expectedEmail && signedIn
       && signedIn !== expectedEmail) {
     showError(
-      `You signed in as ${signedIn}, but this authorization was started ` +
-      `for ${expectedEmail}.\n\nThe operator's script will reject this ` +
-      `mismatch on import. Click "Start over" and use the correct ` +
-      `account this time.`
+      `You signed in as ${signedIn}, but this flow was started ` +
+      `for ${expectedEmail}.\n\nClick "Start over" and use the same ` +
+      `account you typed on the first screen.`
     );
     return;
   }
 
-  // Success — build the blob.
-  //
-  // Same shape as the original SPA helper page so the operator's
-  // Python redemption code (email_oauth_setup.py) handles it without
-  // any modification. The one new field, `origin: ""`, signals
-  // "Native token, do NOT send an Origin header at silent-refresh
-  // time" to the Python guard in email_oauth_setup.py. (Sending an
-  // Origin for a Native-platform redemption triggers AADSTS9002326.)
+  // Success — build the local token blob (version 1 JSON).
+  // origin: "" means Native-platform token (do not send Origin on refresh).
   const blob = {
     version:       BLOB_VERSION,
     email:         signedIn || expectedEmail,
@@ -550,6 +542,18 @@ function flashCopied() {
   setTimeout(() => flag.classList.add("hidden"), 1500);
 }
 
+function onDownloadClick() {
+  const text = document.getElementById("result-blob").value || "";
+  if (!text) return;
+  const blob = new Blob([text], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "token.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function onRestartClick() {
   // Send back to bare URL — DOMContentLoaded will show step-input.
   window.location.href = window.location.pathname;
@@ -565,6 +569,8 @@ document.addEventListener("DOMContentLoaded", () => {
     .addEventListener("click", onAuthorizeClick);
   document.getElementById("copy-btn")
     .addEventListener("click", onCopyClick);
+  document.getElementById("download-btn")
+    .addEventListener("click", onDownloadClick);
   document.getElementById("restart-btn")
     .addEventListener("click", onRestartClick);
   document.getElementById("error-restart-btn")
